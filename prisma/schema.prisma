@@ -1,0 +1,60 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Article {
+  id          String   @id @default(uuid())
+  title       String
+  slug        String   @unique
+  content     String   @db.Text
+  excerpt     String?
+  author      String
+  category    Category @relation(fields: [categoryId], references: [id])
+  categoryId  String
+  tags        Tag[]
+  publishedAt DateTime
+  source      String? // e.g., "New York Times", "BBC"
+  wordCount   Int
+  readingTime Int // in minutes
+  sentiment   Float? // -1 to 1 sentiment score
+  viewCount   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([publishedAt])
+  @@index([categoryId])
+  @@index([author])
+  @@index([slug])
+  @@index([sentiment])
+}
+
+model Category {
+  id          String    @id @default(uuid())
+  name        String    @unique
+  slug        String    @unique
+  description String?
+  articles    Article[]
+  createdAt   DateTime  @default(now())
+
+  @@index([slug])
+}
+
+model Tag {
+  id        String    @id @default(uuid())
+  name      String    @unique
+  articles  Article[]
+  createdAt DateTime  @default(now())
+
+  @@index([name])
+}
