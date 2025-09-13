@@ -1,0 +1,192 @@
+# src/graphql/schema.graphql
+
+type Article {
+  id: ID!
+  title: String!
+  slug: String!
+  content: String!
+  excerpt: String
+  author: String!
+  category: Category!
+  tags: [Tag!]!
+  publishedAt: String!
+  source: String
+  wordCount: Int!
+  readingTime: Int!
+  sentiment: Float
+  viewCount: Int!
+
+  # Computed fields
+  engagementScore: Float!
+  contentQuality: ContentQuality!
+  relatedArticles(limit: Int = 3): [Article!]!
+}
+
+type Category {
+  id: ID!
+  name: String!
+  slug: String!
+  description: String
+  articles(limit: Int, offset: Int): [Article!]!
+  articleCount: Int!
+}
+
+type Tag {
+  id: ID!
+  name: String!
+  articles(limit: Int): [Article!]!
+  articleCount: Int!
+}
+
+type ContentQuality {
+  score: Float!
+  readability: String!
+  completeness: String!
+}
+
+type ArticleStats {
+  totalCount: Int!
+  averageWordCount: Float!
+  averageReadingTime: Float!
+  topAuthors: [AuthorStats!]!
+  categoryBreakdown: [CategoryStats!]!
+  sentimentDistribution: SentimentStats!
+}
+
+type AuthorStats {
+  author: String!
+  articleCount: Int!
+  averageSentiment: Float!
+  totalViews: Int!
+}
+
+type CategoryStats {
+  category: Category!
+  count: Int!
+  percentage: Float!
+}
+
+type SentimentStats {
+  positive: Int!
+  neutral: Int!
+  negative: Int!
+  average: Float!
+}
+
+type SearchResult {
+  articles: [Article!]!
+  totalCount: Int!
+  facets: SearchFacets!
+}
+
+type SearchFacets {
+  categories: [FacetBucket!]!
+  authors: [FacetBucket!]!
+  sources: [FacetBucket!]!
+}
+
+type FacetBucket {
+  key: String!
+  count: Int!
+}
+
+type NLQueryResult {
+  query: String!
+  interpretation: String!
+  graphqlQuery: String!
+  results: JSON!
+  executionTime: Float!
+}
+
+input ArticleFilter {
+  categoryId: ID
+  author: String
+  source: String
+  tags: [String!]
+  publishedAfter: String
+  publishedBefore: String
+  minWordCount: Int
+  maxWordCount: Int
+  sentiment: SentimentRange
+  searchTerm: String
+}
+
+input SentimentRange {
+  min: Float!
+  max: Float!
+}
+
+enum ArticleSortField {
+  PUBLISHED_AT
+  VIEW_COUNT
+  WORD_COUNT
+  SENTIMENT
+  READING_TIME
+}
+
+enum SortOrder {
+  ASC
+  DESC
+}
+
+input ArticleSort {
+  field: ArticleSortField!
+  order: SortOrder!
+}
+
+scalar JSON
+
+type Query {
+  # Basic queries
+  article(id: ID, slug: String): Article
+  articles(filter: ArticleFilter, sort: ArticleSort, limit: Int = 10, offset: Int = 0): [Article!]!
+
+  # Search
+  searchArticles(query: String!, filter: ArticleFilter, limit: Int = 10): SearchResult!
+
+  # Aggregations
+  articleStats(filter: ArticleFilter): ArticleStats!
+  trendingArticles(limit: Int = 5): [Article!]!
+  recommendedArticles(articleId: ID!, limit: Int = 5): [Article!]!
+
+  # Categories & Tags
+  categories: [Category!]!
+  category(slug: String!): Category
+  tags(limit: Int = 50): [Tag!]!
+
+  # LLM Integration
+  naturalLanguageQuery(query: String!): NLQueryResult!
+}
+
+type Mutation {
+  incrementViewCount(articleId: ID!): Article!
+
+  # Admin operations (you might want to add auth)
+  createArticle(input: CreateArticleInput!): Article!
+  updateArticle(id: ID!, input: UpdateArticleInput!): Article!
+  deleteArticle(id: ID!): Boolean!
+}
+
+input CreateArticleInput {
+  title: String!
+  content: String!
+  excerpt: String
+  author: String!
+  categoryId: ID!
+  tagNames: [String!]
+  source: String
+  publishedAt: String
+}
+
+input UpdateArticleInput {
+  title: String
+  content: String
+  excerpt: String
+  categoryId: ID
+  tagNames: [String!]
+}
+
+type Subscription {
+  articlePublished(categoryId: ID): Article!
+  viewCountUpdated(articleId: ID!): Article!
+}
