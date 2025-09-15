@@ -38,10 +38,16 @@ export class NLQueryService {
       // Step 1: Convert natural language to GraphQL query
       const graphqlQuery = await this.convertToGraphQL(naturalLanguageQuery);
 
-      // Step 2: Execute the GraphQL query
+      // Step 2: Validate the generated query
+      const validationResult = this.validateQuery(graphqlQuery.query);
+      if (!validationResult.isValid) {
+        throw new Error(`Generated query validation failed: ${validationResult.errors.join(', ')}`);
+      }
+
+      // Step 3: Execute the GraphQL query
       const results = await this.executeGraphQLQuery(graphqlQuery.query, graphqlQuery.variables);
 
-      // Step 3: Return formatted results
+      // Step 4: Return formatted results
       return {
         query: naturalLanguageQuery,
         interpretation: graphqlQuery.explanation,
@@ -52,6 +58,62 @@ export class NLQueryService {
     } catch (error: any) {
       throw new Error(`Failed to process natural language query: ${error.message}`);
     }
+  }
+
+  private validateQuery(query: string): { isValid: boolean; errors: string[] } {
+    const errors: string[] = [];
+    const queryLower = query.toLowerCase();
+
+    // Define allowed root queries based on actual schema
+    const allowedQueries = [
+      'article',
+      'articles', 
+      'searchArticles',
+      'articleStats',
+      'trendingArticles',
+      'recommendedArticles',
+      'categories',
+      'category',
+      'tags'
+    ];
+
+    // Check if query uses only allowed root queries
+    const usedQueries = allowedQueries.filter(q => queryLower.includes(q.toLowerCase()));
+    if (usedQueries.length === 0) {
+      errors.push('Query does not use any valid root query field');
+    }
+
+    // Validate trendingArticles parameters (limit is optional)
+    // No validation needed for trendingArticles since limit is optional
+
+    // Validate searchArticles has required query parameter
+    if (queryLower.includes('searcharticles') && !queryLower.includes('query:')) {
+      errors.push('searchArticles requires a query parameter');
+    }
+
+    // Validate recommendedArticles has required articleId parameter
+    if (queryLower.includes('recommendedarticles') && !queryLower.includes('articleid:')) {
+      errors.push('recommendedArticles requires an articleId parameter');
+    }
+
+    // Check for common field errors
+    if (queryLower.includes('author {') || queryLower.includes('author{')) {
+      errors.push('author is a String field, not an object - select it directly');
+    }
+
+    if (queryLower.includes('publishedat {') || queryLower.includes('publishedat{')) {
+      errors.push('publishedAt is a String field, not an object - select it directly');
+    }
+
+    // Check for invalid filter syntax
+    if (queryLower.includes('category:') && !queryLower.includes('categoryid:')) {
+      errors.push('Use categoryId instead of category in filters');
+    }
+
+    return {
+      isValid: errors.length === 0,
+      errors
+    };
   }
 
   private async convertToGraphQL(nlQuery: string) {
@@ -67,19 +129,20 @@ export class NLQueryService {
   private async convertWithOpenAI(nlQuery: string) {
     const systemPrompt = `You are a GraphQL query generator for a news article database.
 
-CRITICAL: Follow the exact field types and structures below.
+CRITICAL: Only use the EXACT queries and fields listed below. Do not create any queries or fields not explicitly listed.
 
-Available root queries:
-- article(id: ID, slug: String): Article
-- articles(filter: ArticleFilter, sort: ArticleSort, limit: Int, offset: Int): [Article!]!
-- searchArticles(query: String!, filter: ArticleFilter, limit: Int): SearchResult!
-- articleStats(filter: ArticleFilter): ArticleStats!
-- trendingArticles(limit: Int): [Article!]!
-- recommendedArticles(articleId: ID!, limit: Int): [Article!]!
-- categories: [Category!]!
-- tags(limit: Int): [Tag!]!
+AVAILABLE ROOT QUERIES (use EXACTLY as shown):
+1. article(id: ID, slug: String): Article
+2. articles(filter: ArticleFilter, sort: ArticleSort, limit: Int = 10, offset: Int = 0): [Article!]!
+3. searchArticles(query: String!, filter: ArticleFilter, limit: Int = 10): SearchResult!
+4. articleStats(filter: ArticleFilter): ArticleStats!
+5. trendingArticles(limit: Int = 5): [Article!]!  # limit parameter is optional
+6. recommendedArticles(articleId: ID!, limit: Int = 5): [Article!]!
+7. categories: [Category!]!
+8. category(slug: String!): Category
+9. tags(limit: Int = 50): [Tag!]!
 
-EXACT Article fields (copy these exactly):
+EXACT Article fields (use only these):
 {
   id
   title
@@ -105,7 +168,7 @@ EXACT Article fields (copy these exactly):
   }
 }
 
-SearchResult structure:
+SearchResult structure (for searchArticles only):
 {
   articles {      # Array of Article objects
     # Use Article fields from above
@@ -118,7 +181,7 @@ SearchResult structure:
   }
 }
 
-ArticleStats structure:
+ArticleStats structure (for articleStats only):
 {
   totalCount              # INT! - select directly
   averageWordCount        # FLOAT! - select directly
@@ -147,57 +210,79 @@ ArticleStats structure:
   }
 }
 
-Sort format: { field: PUBLISHED_AT|VIEW_COUNT|WORD_COUNT|SENTIMENT|READING_TIME, order: ASC|DESC }
+Category fields (for categories/category queries):
+{
+  id
+  name
+  slug
+  description
+  articleCount     # INT! - computed field
+}
 
-CRITICAL FILTER SYNTAX:
+Tag fields (for tags query):
+{
+  id
+  name
+  articleCount     # INT! - computed field
+}
+
+STRICT QUERY VALIDATION RULES:
+1. ONLY use queries from the list above
+2. For trendingArticles: limit parameter is optional (defaults to 5)
+3. For categories/tags: limit parameter is optional
+4. For articles: all parameters are optional
+5. For searchArticles: query parameter is REQUIRED
+6. For recommendedArticles: articleId parameter is REQUIRED
+
+Sort format (only for articles query): 
+{ field: PUBLISHED_AT|VIEW_COUNT|WORD_COUNT|SENTIMENT|READING_TIME, order: ASC|DESC }
+
+CRITICAL FILTER SYNTAX (only for articles and searchArticles):
 ArticleFilter expects these exact types:
-- categoryId: "string-id"           # Single category ID as string
+- categoryId: "string-id"           # Single category ID as string (use ID type)
 - author: "author-name"             # Author name as string  
 - source: "source-name"             # Source name as string
 - tags: ["tag1", "tag2"]            # Array of tag NAMES as strings
-- publishedAfter: "2025-01-01"      # Date as string
-- publishedBefore: "2025-12-31"     # Date as string
+- publishedAfter: "2025-01-01"      # Date as ISO string
+- publishedBefore: "2025-12-31"     # Date as ISO string
 - minWordCount: 100                 # Number
 - maxWordCount: 500                 # Number
 - sentiment: { min: 0.5, max: 1.0 } # Object with min/max numbers
 - searchTerm: "search-text"         # String for text search
 
-FILTER EXAMPLES:
-✅ CORRECT:
-filter: { tags: ["technology", "AI"] }
-filter: { author: "Jane Doe" }
-filter: { categoryId: "tech-category-id" }
-
-❌ WRONG:
-filter: { tags: {name: "technology"} }    # ERROR: tags expects array of strings
-filter: { author: {name: "Jane Doe"} }    # ERROR: author expects string
-filter: { category: {name: "Tech"} }      # ERROR: use categoryId with string
-
-EXAMPLES:
-✅ CORRECT:
-query GetArticles {
-  articles(limit: 5) {
+✅ CORRECT queries that EXIST in schema:
+query GetTrending {
+  trendingArticles(limit: 10) {    # limit parameter is optional
     id
     title
     author
-    category {
-      name
-    }
   }
 }
 
-❌ WRONG:
 query GetArticles {
-  articles(limit: 5) {
+  articles(limit: 5, filter: { author: "Jane Doe" }) {
     id
     title
-    author {     # ERROR: author is String!, not object
-      name
-    }
+    author
+    category { name }
   }
 }
 
-Always follow the exact field structures above.`;
+query SearchNews {
+  searchArticles(query: "technology") {
+    articles { id, title }
+    totalCount
+  }
+}
+
+❌ WRONG - these will FAIL:
+query BadFilter {
+  articles(filter: { category: "tech" }) {  # ERROR: use categoryId not category
+    id
+  }
+}
+
+CRITICAL: Only generate queries using the exact field names and structures above. Do not invent new fields or queries.`;
 
     const response = await this.openai.chat.completions.create({
       model: 'gpt-4o-mini',
@@ -222,9 +307,34 @@ Examples: tags: ["AI"], author: "Jane Doe", NOT tags: {name: "AI"} or author: {n
     const result = JSON.parse(response.choices[0].message.content || '{}');
     const parsed = GraphQLQuerySchema.parse(result);
 
+    // Post-process to fix common OpenAI mistakes
+    let correctedQuery = parsed.query;
+    
+    // Ensure trendingArticles includes limit parameter if not specified
+    if (correctedQuery.includes('trendingArticles') && !correctedQuery.includes('trendingArticles(')) {
+      correctedQuery = correctedQuery.replace('trendingArticles', 'trendingArticles(limit: 10)');
+    }
+    
+    // Ensure categories includes articleCount field
+    if (correctedQuery.includes('categories') && !correctedQuery.includes('articleCount')) {
+      correctedQuery = correctedQuery.replace(
+        /categories\s*\{\s*([^}]+)\s*\}/g, 
+        'categories { $1 articleCount }'
+      );
+    }
+
+    // Ensure tags includes articleCount field  
+    if (correctedQuery.includes('tags') && !correctedQuery.includes('articleCount')) {
+      correctedQuery = correctedQuery.replace(
+        /tags[^{]*\{\s*([^}]+)\s*\}/g,
+        'tags { $1 articleCount }'
+      );
+    }
+
     // Ensure variables is an object or undefined, not null
     return {
       ...parsed,
+      query: correctedQuery,
       variables: parsed.variables || undefined,
     };
   }
@@ -236,12 +346,12 @@ Examples: tags: ["AI"], author: "Jane Doe", NOT tags: {name: "AI"} or author: {n
   } {
     const query = nlQuery.toLowerCase();
 
-    // Pattern: trending articles
+    // Pattern: trending articles (with optional limit)
     if (query.includes('trending') || query.includes('popular')) {
       return {
         query: `
           query GetTrendingArticles {
-            trendingArticles {
+            trendingArticles(limit: 10) {
               id
               title
               slug
@@ -250,6 +360,7 @@ Examples: tags: ["AI"], author: "Jane Doe", NOT tags: {name: "AI"} or author: {n
               publishedAt
               viewCount
               category {
+                id
                 name
               }
             }
@@ -272,10 +383,14 @@ Examples: tags: ["AI"], author: "Jane Doe", NOT tags: {name: "AI"} or author: {n
                 author
                 articleCount
                 averageSentiment
+                totalViews
               }
               categoryBreakdown {
                 category {
+                  id
                   name
+                  slug
+                  description
                 }
                 count
                 percentage
@@ -318,13 +433,29 @@ Examples: tags: ["AI"], author: "Jane Doe", NOT tags: {name: "AI"} or author: {n
                 publishedAt
                 viewCount
                 category {
+                  id
                   name
                 }
                 tags {
+                  id
                   name
                 }
               }
               totalCount
+              facets {
+                categories {
+                  key
+                  count
+                }
+                authors {
+                  key
+                  count
+                }
+                sources {
+                  key
+                  count
+                }
+              }
             }
           }
         `,
@@ -347,6 +478,7 @@ Examples: tags: ["AI"], author: "Jane Doe", NOT tags: {name: "AI"} or author: {n
               publishedAt
               viewCount
               category {
+                id
                 name
               }
             }
@@ -374,6 +506,22 @@ Examples: tags: ["AI"], author: "Jane Doe", NOT tags: {name: "AI"} or author: {n
       };
     }
 
+    // Pattern: tags
+    if (query.includes('tags') || query.includes('tag')) {
+      return {
+        query: `
+          query GetTags {
+            tags(limit: 20) {
+              id
+              name
+              articleCount
+            }
+          }
+        `,
+        explanation: 'Listing popular article tags',
+      };
+    }
+
     // Default: return recent articles
     return {
       query: `
@@ -387,6 +535,7 @@ Examples: tags: ["AI"], author: "Jane Doe", NOT tags: {name: "AI"} or author: {n
             publishedAt
             viewCount
             category {
+              id
               name
             }
           }
@@ -507,10 +656,14 @@ export class MCPServer {
                   author
                   articleCount
                   averageSentiment
+                  totalViews
                 }
                 categoryBreakdown {
                   category {
+                    id
                     name
+                    slug
+                    description
                   }
                   count
                   percentage
@@ -525,7 +678,7 @@ export class MCPServer {
             }
           `;
 
-          const variables = params.filter
+          const variables = params?.filter
             ? {
                 filter: {
                   ...(params.filter.category && { categoryId: params.filter.category }),

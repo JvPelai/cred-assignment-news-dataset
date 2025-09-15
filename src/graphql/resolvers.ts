@@ -189,7 +189,9 @@ export const resolvers = {
         neutral: articles.filter((a) => a.sentiment && a.sentiment >= -0.3 && a.sentiment <= 0.3)
           .length,
         negative: articles.filter((a) => a.sentiment && a.sentiment < -0.3).length,
-        average: articles.reduce((sum, a) => sum + (a.sentiment || 0), 0) / articles.length,
+        average: articles.length > 0 
+          ? articles.reduce((sum, a) => sum + (a.sentiment || 0), 0) / articles.length 
+          : 0,
       };
 
       // Get category details
@@ -210,13 +212,13 @@ export const resolvers = {
         categoryBreakdown: categoryData.map((c) => ({
           category: categories.find((cat) => cat.id === c.categoryId),
           count: c._count,
-          percentage: (c._count / totalCount) * 100,
+          percentage: totalCount > 0 ? (c._count / totalCount) * 100 : 0,
         })),
         sentimentDistribution,
       };
     },
 
-    trendingArticles: async () => {
+    trendingArticles: async (_: any, args: { limit?: number }) => {
       // Trending based on recent views and engagement
       const since = new Date();
       since.setDate(since.getDate() - 7); // Last 7 days
@@ -224,7 +226,7 @@ export const resolvers = {
       return prisma.article.findMany({
         where: { publishedAt: { gte: since } },
         orderBy: { viewCount: 'desc' },
-        take: 5,
+        take: args.limit || 5,
       });
     },
 

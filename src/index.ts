@@ -42,34 +42,17 @@ async function startServer() {
     })
   );
 
-  app.post('/mcp/tools', async (req, res) => {
-    try {
-      const { tool, params } = req.body;
-      const result = await mcpServer.handleToolCall(tool, params);
-      res.json({ success: true, result });
-    } catch (error: any) {
-      res.status(400).json({ success: false, error: error.message });
-    }
-  });
-
-  app.get('/mcp/tools', (_req, res) => {
-    const tools = mcpServer.getTools().map((t) => ({
-      name: t.name,
-      description: t.description,
-      parameters: t.parameters,
-    }));
-    res.json({ tools });
-  });
-
-  app.get('/health', (_req, res) => {
-    res.json({ status: 'ok', timestamp: new Date().toISOString() });
-  });
+  // Mount routes
+  const { createRoutes } = require('./routes');
+  app.use('/', createRoutes(mcpServer));
 
   const PORT = process.env.PORT ? Number(process.env.PORT) : 4000;
   await new Promise<void>((resolve) => httpServer.listen(PORT, resolve));
 
   console.log(`Server ready at http://localhost:${PORT}/graphql`);
+  console.log(`Health check available at http://localhost:${PORT}/health`);
   console.log(`MCP tools available at http://localhost:${PORT}/mcp/tools`);
+  console.log(`MCP execution available at http://localhost:${PORT}/mcp/execute`);
 }
 
 startServer().catch((err) => {
